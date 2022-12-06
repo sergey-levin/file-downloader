@@ -1,54 +1,57 @@
-#include "downloader.h"
-#include "worker.h"
 
-#include <QCoreApplication>
-#include <QEventLoop>
-#include <QTimer>
-#include <QThreadPool>
-#include <QtConcurrent/QtConcurrentMap>
+#include "downloader.h"
+
+#include <QNetworkReply>
+#include <QSaveFile>
 
 #include <QDebug>
 
 namespace {
 
-qsizetype download(QUrl url, QString dir, int timeout) {
-    // TODO: Implement different Worker types to do something new
-    auto worker = new Worker(url, dir);
-    QEventLoop loop;
-    QObject::connect(worker, &Worker::downloaded, &loop, &QEventLoop::quit);
-    if (timeout)
-        QTimer::singleShot(1000 * timeout, &loop, &QEventLoop::quit);
-    loop.exec(QEventLoop::ExcludeUserInputEvents);
-    qsizetype result = worker->bytesDownloaded();
-    worker->deleteLater();
-    return result;
-}
-
-}
-
-Downloader::Downloader(const QStringList &urls, QString dir, int timeout, int connections, QObject *parent)
-    : QObject(parent)
+bool isSucceeded(QNetworkReply *reply)
 {
-    // Simple input validation
-    if (urls.isEmpty())
-        return;
-    dir = dir.isEmpty() ? "." : dir;
-    connections = qMax(1, connections);
+    if (reply->error() == QNetworkReply::NoError ) {
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if ((code >=200) && (code < 300)) {
+            return true;
+        }
+    }
+    return false;
+}
 
-    auto pool = QThreadPool::globalInstance();
-    pool->setMaxThreadCount(connections);
-    QFuture<qsizetype> future = QtConcurrent::mappedReduced(
-            pool,
-            urls,
-            [dir, timeout](const QString &url){
-                // Runs in thread from thread pool
-                return download(url, dir, timeout);
-            },
-            [](qsizetype &total, const qsizetype &current) {
-                total += current;
-            });
-    future.waitForFinished();
-    qInfo() << "Downloaded total:" << future.result() << "byte(s)";
-    qApp->quit();
+}
+
+Downloader::Downloader(QUrl url, QString target, QObject *parent)
+    : QObject(parent)
+    , m_target(target + '/' + url.fileName())
+{
+    connect(&m_fetcher, &QNetworkAccessManager::finished, this, &Downloader::onDownloaded);
+    qInfo() << "Starting download:" << url;
+    QNetworkRequest request(url);
+    m_fetcher.get(request);
+}
+
+Downloader::~Downloader() {}
+
+void Downloader::onDownloaded(QNetworkReply *reply)
+{
+    if (isSucceeded(reply)) {
+        const QByteArray data = reply->readAll();
+        m_size = data.size();
+        qInfo() << "Downloaded:" << m_size << "byte(s)";
+
+        QSaveFile file(m_target);
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(data);
+            file.commit();
+            qInfo() << "File saved:" << m_target;
+        } else {
+            qInfo() << "Failed to save file:" << m_target;
+        }
+    } else {
+        qInfo() << "Download failed with error:" << reply->errorString();
+    }
+    reply->deleteLater();
+    emit downloaded();
 }
 

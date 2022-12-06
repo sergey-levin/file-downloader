@@ -12,11 +12,9 @@ CONFIG += c++17 console
 CONFIG -= app_bundle
 
 HEADERS += \
-    worker.h \
     downloader.h \
 
 SOURCES += \
-    worker.cpp \
     downloader.cpp \
     main.cpp \
 

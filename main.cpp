@@ -2,6 +2,28 @@
 
 #include <QCoreApplication>
 #include <QCommandLineParser>
+#include <QEventLoop>
+#include <QTimer>
+#include <QThreadPool>
+#include <QtConcurrent/QtConcurrentMap>
+#include <QDebug>
+
+namespace {
+
+qsizetype download(QUrl url, QString dir, int timeout) {
+    // TODO: Implement different Worker types to do something new
+    auto worker = new Downloader(url, dir);
+    QEventLoop loop;
+    QObject::connect(worker, &Downloader::downloaded, &loop, &QEventLoop::quit);
+    if (timeout)
+        QTimer::singleShot(1000 * timeout, &loop, &QEventLoop::quit);
+    loop.exec(QEventLoop::ExcludeUserInputEvents);
+    qsizetype result = worker->bytesDownloaded();
+    worker->deleteLater();
+    return result;
+}
+
+}
 
 int main(int argc, char *argv[])
 {
@@ -37,11 +59,26 @@ int main(int argc, char *argv[])
 
     // TODO: Validate input
     const QStringList urls = parser.value(urlListOption).split(" ", Qt::SkipEmptyParts);
-    const QString dir = parser.value(dirOption);
-    const int timeout = parser.value(timeoutOption).toInt();
-    const int connections = parser.value(connectionsOption).toInt();
-
-    Downloader(urls, dir, timeout, connections);
+    if (!urls.isEmpty()) {
+        const QString dir = parser.value(dirOption).isEmpty() ? "." : parser.value(dirOption);
+        const int timeout = parser.value(timeoutOption).toInt();
+        const int connections = qMax(1, parser.value(connectionsOption).toInt());
+        auto pool = QThreadPool::globalInstance();
+        pool->setMaxThreadCount(connections);
+        QFuture<qsizetype> future = QtConcurrent::mappedReduced(
+                pool,
+                urls,
+                [dir, timeout](const QString &url){
+                    // Runs in thread from thread pool
+                    return download(url, dir, timeout);
+                },
+                [](qsizetype &total, const qsizetype &current) {
+                    total += current;
+                });
+        future.waitForFinished();
+        qInfo() << "Downloaded total:" << future.result() << "byte(s)";
+        qApp->quit();
+    }
 
     // TODO: Different return codes
     return 0;
