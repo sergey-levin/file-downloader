@@ -1,4 +1,5 @@
 #include "downloader.h"
+#include "callbackinterface.h"
 
 #include <QCoreApplication>
 #include <QCommandLineParser>
@@ -10,9 +11,9 @@
 
 namespace {
 
-qsizetype download(QUrl url, QString dir, int timeout) {
+qsizetype download(CallbackInterface &interface, QUrl url, QString dir, int timeout) {
     // TODO: Implement different Worker types to do something new
-    auto worker = new Downloader(url, dir);
+    auto worker = new Downloader(url, dir, interface);
     QEventLoop loop;
     QObject::connect(worker, &Downloader::downloaded, &loop, &QEventLoop::quit);
     if (timeout)
@@ -60,6 +61,8 @@ int main(int argc, char *argv[])
     // TODO: Validate input
     const QStringList urls = parser.value(urlListOption).split(" ", Qt::SkipEmptyParts);
     if (!urls.isEmpty()) {
+        DownloaderInterface interface;
+
         const QString dir = parser.value(dirOption).isEmpty() ? "." : parser.value(dirOption);
         const int timeout = parser.value(timeoutOption).toInt();
         const int connections = qMax(1, parser.value(connectionsOption).toInt());
@@ -68,15 +71,15 @@ int main(int argc, char *argv[])
         QFuture<qsizetype> future = QtConcurrent::mappedReduced(
                 pool,
                 urls,
-                [dir, timeout](const QString &url){
+                [dir, timeout, &interface](const QString &url){
                     // Runs in thread from thread pool
-                    return download(url, dir, timeout);
+                    return download(interface, url, dir, timeout);
                 },
                 [](qsizetype &total, const qsizetype &current) {
                     total += current;
                 });
         future.waitForFinished();
-        qInfo() << "Downloaded total:" << future.result() << "byte(s)";
+        interface.onSuccess(QString::number(future.result()));
         qApp->quit();
     }
 

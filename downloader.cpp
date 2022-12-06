@@ -1,10 +1,8 @@
-
 #include "downloader.h"
+#include "callbackinterface.h"
 
 #include <QNetworkReply>
 #include <QSaveFile>
-
-#include <QDebug>
 
 namespace {
 
@@ -21,35 +19,37 @@ bool isSucceeded(QNetworkReply *reply)
 
 }
 
-Downloader::Downloader(QUrl url, QString target, QObject *parent)
+Downloader::Downloader(QUrl url, QString target, CallbackInterface &interface, QObject *parent)
     : QObject(parent)
+    , m_interface(interface)
     , m_target(target + '/' + url.fileName())
 {
     connect(&m_fetcher, &QNetworkAccessManager::finished, this, &Downloader::onDownloaded);
-    qInfo() << "Starting download:" << url;
+    m_interface.onStart(url.toString());
     QNetworkRequest request(url);
     m_fetcher.get(request);
 }
 
-Downloader::~Downloader() {}
+Downloader::~Downloader() {
+}
 
 void Downloader::onDownloaded(QNetworkReply *reply)
 {
     if (isSucceeded(reply)) {
         const QByteArray data = reply->readAll();
         m_size = data.size();
-        qInfo() << "Downloaded:" << m_size << "byte(s)";
+        m_interface.onDownload(QString::number(m_size));
 
         QSaveFile file(m_target);
         if (file.open(QIODevice::WriteOnly)) {
             file.write(data);
             file.commit();
-            qInfo() << "File saved:" << m_target;
+            m_interface.onSave(m_target);
         } else {
-            qInfo() << "Failed to save file:" << m_target;
+            m_interface.onSaveError(m_target);
         }
     } else {
-        qInfo() << "Download failed with error:" << reply->errorString();
+        m_interface.onDownloadError(reply->errorString());
     }
     reply->deleteLater();
     emit downloaded();

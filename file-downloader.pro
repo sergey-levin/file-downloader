@@ -12,9 +12,11 @@ CONFIG += c++17 console
 CONFIG -= app_bundle
 
 HEADERS += \
+    callbackinterface.h \
     downloader.h \
 
 SOURCES += \
+    callbackinterface.cpp \
     downloader.cpp \
     main.cpp \
 
